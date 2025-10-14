@@ -1,65 +1,97 @@
-name: Awesome action
-description: Wraps the slack notification action
+name: Awesome Slack Action
+description: 'A robust wrapper for sending Slack notifications with support for templates, replacements, and threading.'
+
 inputs:
   payload:
-    description: String payload to send
+    description: 'Direct JSON string payload to send.'
     required: false
     default: ''
   payload-file-path:
-    description: Path to the template with the payload to send
+    description: 'Path to a template file with the payload to send.'
     required: false
     default: ''
   replacements:
-    description: Replacements to perform on the payload file
+    description: 'Comma-separated key=value pairs for replacing placeholders in the template file (e.g., "name=John,status=Success").'
     required: false
     default: ''
   channel-id:
-    description: Channel to send the notification to
+    description: 'The ID of the channel to send the notification to.'
     required: true
   slack-bot-token:
-    description: Access token to the Slack API
+    description: 'The Slack Bot Token for API access.'
     required: true
   thread-ts:
-    description: 'The timestamp of an existing message to reply to (creates a thread)'
+    description: 'The timestamp of a parent message to reply to, which creates a thread.'
     required: false
     default: ''
 outputs:
   message-ts:
-    description: "The timestamp of the message that was sent. Use this as the `thread-ts` for subsequent messages."
-    value: ${{ steps.slack-notification-template.outputs.slack-message-ts || steps.slack-notification-payload.outputs.slack-message-ts }}
+    description: "The timestamp (ts) of the message that was sent. Use this as the `thread-ts` for subsequent replies."
+    value: ${{ steps.send-message.outputs.message-ts }}
+
 runs:
-  using: composite
+  using: "composite"
   steps:
-    - name: Fix Slack notification template
-      if: ${{ inputs.payload-file-path != '' }}
-      id: fix_template
+    - id: send-message
       run: |
-        ${{ github.action_path }}/script.sh ${{ inputs.payload-file-path }}
-      shell: bash
-      env:
-        REPL: ${{ inputs.replacements }}
-    - name: Send Slack notification template
-      if: ${{ inputs.payload-file-path != '' && steps.fix_template.outcome == 'success' }}
-      id: slack-notification-template
-      uses: slackapi/slack-github-action@v1.26.0
-      with:
-        channel-id: ${{ inputs.channel-id }}
-        payload-file-path: ${{ inputs.payload-file-path }}.fixed
-        thread-ts: ${{ inputs.thread-ts }}
-      env:
-        SLACK_BOT_TOKEN: ${{ inputs.slack-bot-token }}
-    - name: Send Slack notification payload
-      if: ${{ inputs.payload-file-path == '' && inputs.payload != '' }}
-      id: slack-notification-payload
-      uses: slackapi/slack-github-action@v1.26.0
-      with:
-        channel-id: ${{ inputs.channel-id }}
-        payload: ${{ inputs.payload }}
-        thread-ts: ${{ inputs.thread-ts }}
-      env:
-        SLACK_BOT_TOKEN: ${{ inputs.slack-bot-token }}
-    - name: Clean temporal files
-      id: clean
-      if: ${{ always() && inputs.payload-file-path != '' && steps.fix_template.outcome == 'success' }}
-      run: rm ${{ inputs.payload-file-path }}.fixed
+        set -e # Exit immediately if a command exits with a non-zero status.
+        if [[ -n "${{ inputs.payload-file-path }}" ]]; then
+          echo "Using payload from file: ${{ inputs.payload-file-path }}"
+          if [[ ! -f "${{ inputs.payload-file-path }}" ]]; then
+            echo "Error: Payload file not found at ${{ inputs.payload-file-path }}"
+            exit 1
+          fi
+          # Read file content
+          PAYLOAD_CONTENT=$(cat "${{ inputs.payload-file-path }}")
+
+          if [[ -n "${{ inputs.replacements }}" ]]; then
+            # Save the original Internal Field Separator (IFS)
+            OLD_IFS=$IFS
+            IFS=','
+            # Loop through each "key=value" pair
+            for replacement in ${{ inputs.replacements }}; do
+              # Split the pair into key and value
+              KEY=$(echo "$replacement" | cut -d'=' -f1)
+              VALUE=$(echo "$replacement" | cut -d'=' -f2-)
+              echo "Replacing placeholder '{$KEY}' with '$VALUE'"
+              # Use a temporary delimiter for sed to handle slashes in values
+              PAYLOAD_CONTENT=$(echo "$PAYLOAD_CONTENT" | sed "s|{$KEY}|$VALUE|g")
+            done
+            IFS=$OLD_IFS
+          fi
+        elif [[ -n "${{ inputs.payload }}" ]]; then
+          echo "Using direct payload input."
+          PAYLOAD_CONTENT='${{ inputs.payload }}'
+        else
+          echo "Error: You must provide either 'payload' or 'payload-file-path'."
+          exit 1
+        fi
+
+        FINAL_PAYLOAD=$(jq -c '.channel="${{ inputs.channel-id }}"' <<< "$PAYLOAD_CONTENT")
+
+        if [[ -n "${{ inputs.thread-ts }}" ]]; then
+          echo "Replying in thread: ${{ inputs.thread-ts }}"
+          FINAL_PAYLOAD=$(jq -c '.thread_ts="${{ inputs.thread-ts }}"' <<< "$FINAL_PAYLOAD")
+        fi
+
+        echo "Final payload being sent to Slack:"
+        echo "$FINAL_PAYLOAD" | jq .
+
+        API_RESPONSE=$(curl -s -X POST "https://slack.com/api/chat.postMessage" \
+          -H "Authorization: Bearer ${{ inputs.slack-bot-token }}" \
+          -H "Content-Type: application/json; charset=utf-8" \
+          -d "$FINAL_PAYLOAD")
+
+        echo "Slack API Response: $API_RESPONSE"
+
+        if [[ $(jq -r '.ok' <<< "$API_RESPONSE") != "true" ]]; then
+          ERROR_MSG=$(jq -r '.error' <<< "$API_RESPONSE")
+          echo "Error from Slack API: $ERROR_MSG"
+          exit 1
+        fi
+
+        # Extract the message timestamp (ts) and set it as a step output.
+        MESSAGE_TS=$(jq -r '.ts' <<< "$API_RESPONSE")
+        echo "Successfully sent message with ts: $MESSAGE_TS"
+        echo "message-ts=$MESSAGE_TS" >> "$GITHUB_OUTPUT"
       shell: bash
