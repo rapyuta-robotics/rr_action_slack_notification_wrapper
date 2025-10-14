@@ -11,7 +11,7 @@ inputs:
     required: false
     default: ''
   replacements:
-    description: 'Comma-separated key=value pairs for replacing placeholders in the template file (e.g., "name=John,status=Success").'
+    description: 'Comma-separated key=value pairs for replacing placeholders.'
     required: false
     default: ''
   channel-id:
@@ -21,13 +21,13 @@ inputs:
     description: 'The Slack Bot Token for API access.'
     required: true
   thread-ts:
-    description: 'The timestamp of a parent message to reply to, which creates a thread.'
+    description: 'The timestamp of a parent message to reply to.'
     required: false
     default: ''
 
 outputs:
   message-ts:
-    description: "The timestamp (ts) of the message that was sent. Use this as the `thread-ts` for subsequent replies."
+    description: "The timestamp (ts) of the message that was sent."
     value: ${{ steps.send-message.outputs.message-ts }}
 
 runs:
@@ -35,9 +35,7 @@ runs:
   steps:
     - id: send-message
       run: |
-        set -e # Exit immediately if a command exits with a non-zero status.
-
-        # We check the INPUT_PAYLOAD_FILE_PATH environment variable
+        set -e
         if [[ -n "$INPUT_PAYLOAD_FILE_PATH" ]]; then
           echo "Using payload from file: $INPUT_PAYLOAD_FILE_PATH"
           if [[ ! -f "$INPUT_PAYLOAD_FILE_PATH" ]]; then
@@ -49,7 +47,6 @@ runs:
           if [[ -n "$INPUT_REPLACEMENTS" ]]; then
             OLD_IFS=$IFS
             IFS=','
-            # This loop now safely iterates over the replacements variable
             for replacement in $INPUT_REPLACEMENTS; do
               KEY=$(echo "$replacement" | cut -d'=' -f1)
               VALUE=$(echo "$replacement" | cut -d'=' -f2-)
@@ -66,11 +63,11 @@ runs:
           exit 1
         fi
 
-        FINAL_PAYLOAD=$(jq -c '.channel="$INPUT_CHANNEL_ID"' <<< "$PAYLOAD_CONTENT")
+        FINAL_PAYLOAD=$(jq -c --arg ch_id "$INPUT_CHANNEL_ID" '.channel = $ch_id' <<< "$PAYLOAD_CONTENT")
 
         if [[ -n "$INPUT_THREAD_TS" ]]; then
           echo "Replying in thread: $INPUT_THREAD_TS"
-          FINAL_PAYLOAD=$(jq -c '.thread_ts="$INPUT_THREAD_TS"' <<< "$FINAL_PAYLOAD")
+          FINAL_PAYLOAD=$(jq -c --arg th_ts "$INPUT_THREAD_TS" '.thread_ts = $th_ts' <<< "$FINAL_PAYLOAD")
         fi
 
         echo "Final payload being sent to Slack:"
