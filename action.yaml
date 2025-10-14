@@ -24,6 +24,7 @@ inputs:
     description: 'The timestamp of a parent message to reply to, which creates a thread.'
     required: false
     default: ''
+
 outputs:
   message-ts:
     description: "The timestamp (ts) of the message that was sent. Use this as the `thread-ts` for subsequent replies."
@@ -35,50 +36,48 @@ runs:
     - id: send-message
       run: |
         set -e # Exit immediately if a command exits with a non-zero status.
-        if [[ -n "${{ inputs.payload-file-path }}" ]]; then
-          echo "Using payload from file: ${{ inputs.payload-file-path }}"
-          if [[ ! -f "${{ inputs.payload-file-path }}" ]]; then
-            echo "Error: Payload file not found at ${{ inputs.payload-file-path }}"
+
+        # We check the INPUT_PAYLOAD_FILE_PATH environment variable
+        if [[ -n "$INPUT_PAYLOAD_FILE_PATH" ]]; then
+          echo "Using payload from file: $INPUT_PAYLOAD_FILE_PATH"
+          if [[ ! -f "$INPUT_PAYLOAD_FILE_PATH" ]]; then
+            echo "Error: Payload file not found at $INPUT_PAYLOAD_FILE_PATH"
             exit 1
           fi
-          # Read file content
-          PAYLOAD_CONTENT=$(cat "${{ inputs.payload-file-path }}")
+          PAYLOAD_CONTENT=$(cat "$INPUT_PAYLOAD_FILE_PATH")
 
-          if [[ -n "${{ inputs.replacements }}" ]]; then
-            # Save the original Internal Field Separator (IFS)
+          if [[ -n "$INPUT_REPLACEMENTS" ]]; then
             OLD_IFS=$IFS
             IFS=','
-            # Loop through each "key=value" pair
-            for replacement in ${{ inputs.replacements }}; do
-              # Split the pair into key and value
+            # This loop now safely iterates over the replacements variable
+            for replacement in $INPUT_REPLACEMENTS; do
               KEY=$(echo "$replacement" | cut -d'=' -f1)
               VALUE=$(echo "$replacement" | cut -d'=' -f2-)
               echo "Replacing placeholder '{$KEY}' with '$VALUE'"
-              # Use a temporary delimiter for sed to handle slashes in values
               PAYLOAD_CONTENT=$(echo "$PAYLOAD_CONTENT" | sed "s|{$KEY}|$VALUE|g")
             done
             IFS=$OLD_IFS
           fi
-        elif [[ -n "${{ inputs.payload }}" ]]; then
+        elif [[ -n "$INPUT_PAYLOAD" ]]; then
           echo "Using direct payload input."
-          PAYLOAD_CONTENT='${{ inputs.payload }}'
+          PAYLOAD_CONTENT="$INPUT_PAYLOAD"
         else
           echo "Error: You must provide either 'payload' or 'payload-file-path'."
           exit 1
         fi
 
-        FINAL_PAYLOAD=$(jq -c '.channel="${{ inputs.channel-id }}"' <<< "$PAYLOAD_CONTENT")
+        FINAL_PAYLOAD=$(jq -c '.channel="$INPUT_CHANNEL_ID"' <<< "$PAYLOAD_CONTENT")
 
-        if [[ -n "${{ inputs.thread-ts }}" ]]; then
-          echo "Replying in thread: ${{ inputs.thread-ts }}"
-          FINAL_PAYLOAD=$(jq -c '.thread_ts="${{ inputs.thread-ts }}"' <<< "$FINAL_PAYLOAD")
+        if [[ -n "$INPUT_THREAD_TS" ]]; then
+          echo "Replying in thread: $INPUT_THREAD_TS"
+          FINAL_PAYLOAD=$(jq -c '.thread_ts="$INPUT_THREAD_TS"' <<< "$FINAL_PAYLOAD")
         fi
 
         echo "Final payload being sent to Slack:"
         echo "$FINAL_PAYLOAD" | jq .
 
         API_RESPONSE=$(curl -s -X POST "https://slack.com/api/chat.postMessage" \
-          -H "Authorization: Bearer ${{ inputs.slack-bot-token }}" \
+          -H "Authorization: Bearer $INPUT_SLACK_BOT_TOKEN" \
           -H "Content-Type: application/json; charset=utf-8" \
           -d "$FINAL_PAYLOAD")
 
@@ -86,12 +85,18 @@ runs:
 
         if [[ $(jq -r '.ok' <<< "$API_RESPONSE") != "true" ]]; then
           ERROR_MSG=$(jq -r '.error' <<< "$API_RESPONSE")
-          echo "Error from Slack API: $ERROR_MSG"
+          echo "::error title=Slack API Error::$ERROR_MSG"
           exit 1
         fi
 
-        # Extract the message timestamp (ts) and set it as a step output.
         MESSAGE_TS=$(jq -r '.ts' <<< "$API_RESPONSE")
         echo "Successfully sent message with ts: $MESSAGE_TS"
         echo "message-ts=$MESSAGE_TS" >> "$GITHUB_OUTPUT"
       shell: bash
+      env:
+        INPUT_PAYLOAD: ${{ inputs.payload }}
+        INPUT_PAYLOAD_FILE_PATH: ${{ inputs.payload-file-path }}
+        INPUT_REPLACEMENTS: ${{ inputs.replacements }}
+        INPUT_CHANNEL_ID: ${{ inputs.channel-id }}
+        INPUT_SLACK_BOT_TOKEN: ${{ inputs.slack-bot-token }}
+        INPUT_THREAD_TS: ${{ inputs.thread-ts }}
