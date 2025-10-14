@@ -19,6 +19,14 @@ inputs:
   slack-bot-token:
     description: Access token to the Slack API
     required: true
+  thread-ts:
+    description: 'The timestamp of an existing message to reply to (creates a thread)'
+    required: false
+    default: ''
+outputs:
+  message-ts:
+    description: "The timestamp of the message that was sent. Use this as the `thread-ts` for subsequent messages."
+    value: ${{ steps.slack-notification-template.outputs.slack-message-ts || steps.slack-notification-payload.outputs.slack-message-ts }}
 runs:
   using: composite
   steps:
@@ -37,6 +45,7 @@ runs:
       with:
         channel-id: ${{ inputs.channel-id }}
         payload-file-path: ${{ inputs.payload-file-path }}.fixed
+        thread-ts: ${{ inputs.thread-ts }}
       env:
         SLACK_BOT_TOKEN: ${{ inputs.slack-bot-token }}
     - name: Send Slack notification payload
@@ -46,6 +55,7 @@ runs:
       with:
         channel-id: ${{ inputs.channel-id }}
         payload: ${{ inputs.payload }}
+        thread-ts: ${{ inputs.thread-ts }}
       env:
         SLACK_BOT_TOKEN: ${{ inputs.slack-bot-token }}
     - name: Clean temporal files
