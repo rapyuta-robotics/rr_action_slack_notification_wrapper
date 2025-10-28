@@ -24,6 +24,10 @@ inputs:
     description: 'The timestamp of a parent message to reply to.'
     required: false
     default: ''
+  reply-broadcast:
+    description: 'When replying to a thread, also send the message to the main channel.'
+    required: false
+    default: 'false'
 
 outputs:
   message-ts:
@@ -68,6 +72,11 @@ runs:
         if [[ -n "$INPUT_THREAD_TS" ]]; then
           echo "Replying in thread: $INPUT_THREAD_TS"
           FINAL_PAYLOAD=$(jq -c --arg th_ts "$INPUT_THREAD_TS" '.thread_ts = $th_ts' <<< "$FINAL_PAYLOAD")
+
+          if [[ "$INPUT_REPLY_BROADCAST" == "true" ]]; then
+            echo "Broadcasting reply to channel."
+            FINAL_PAYLOAD=$(jq -c '.reply_broadcast = true' <<< "$FINAL_PAYLOAD")
+          fi
         fi
 
         echo "Final payload being sent to Slack:"
@@ -97,3 +106,4 @@ runs:
         INPUT_CHANNEL_ID: ${{ inputs.channel-id }}
         INPUT_SLACK_BOT_TOKEN: ${{ inputs.slack-bot-token }}
         INPUT_THREAD_TS: ${{ inputs.thread-ts }}
+        INPUT_REPLY_BROADCAST: ${{ inputs.reply-broadcast }}
