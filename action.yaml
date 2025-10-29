@@ -1,37 +1,37 @@
-name: Awesome Slack Action
-description: 'A robust wrapper for sending Slack notifications with support for templates, replacements, and threading.'
+name: Awesome action
+description: Wraps the slack notification action
 
 inputs:
   payload:
-    description: 'Direct JSON string payload to send.'
+    description: Direct JSON string payload to send
     required: false
     default: ''
   payload-file-path:
-    description: 'Path to a template file with the payload to send.'
+    description: Path to the template with the payload to send
     required: false
     default: ''
   replacements:
-    description: 'Comma-separated key=value pairs for replacing placeholders.'
+    description: Replacements to perform on the payload file
     required: false
     default: ''
   channel-id:
-    description: 'The ID of the channel to send the notification to.'
+    description: Channel to send the notification to
     required: true
   slack-bot-token:
-    description: 'The Slack Bot Token for API access.'
+    description: Access token to the Slack API
     required: true
   thread-ts:
-    description: 'The timestamp of a parent message to reply to.'
+    description: The timestamp of a parent message to reply to
     required: false
     default: ''
   reply-broadcast:
-    description: 'When replying to a thread, also send the message to the main channel.'
+    description: When replying to a thread, also send the message to the main channel
     required: false
     default: 'false'
 
 outputs:
   message-ts:
-    description: "The timestamp (ts) of the message that was sent."
+    description: The timestamp (ts) of the message that was sent
     value: ${{ steps.send-message.outputs.message-ts }}
 
 runs:
@@ -50,7 +50,7 @@ runs:
 
           if [[ -n "$INPUT_REPLACEMENTS" ]]; then
             OLD_IFS=$IFS
-            IFS=','
+            IFS=$'\n,'
             for replacement in $INPUT_REPLACEMENTS; do
               KEY=$(echo "$replacement" | cut -d'=' -f1)
               VALUE=$(echo "$replacement" | cut -d'=' -f2-)
