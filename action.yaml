@@ -35,29 +35,26 @@ outputs:
     value: ${{ steps.send-message.outputs.message-ts }}
 
 runs:
-  using: "composite"
+  using: composite
   steps:
+    - name: Apply replacements (legacy compatible)
+      if: ${{ inputs.payload-file-path != '' && inputs.replacements != '' }}
+      run: |
+        bash "${{ github.action_path }}/script.sh" "${{ inputs.payload-file-path }}"
+      shell: bash
+      env:
+        REPL: ${{ inputs.replacements }}
+
     - id: send-message
       run: |
         set -e
         if [[ -n "$INPUT_PAYLOAD_FILE_PATH" ]]; then
-          echo "Using payload from file: $INPUT_PAYLOAD_FILE_PATH"
-          if [[ ! -f "$INPUT_PAYLOAD_FILE_PATH" ]]; then
-            echo "Error: Payload file not found at $INPUT_PAYLOAD_FILE_PATH"
-            exit 1
-          fi
-          PAYLOAD_CONTENT=$(cat "$INPUT_PAYLOAD_FILE_PATH")
-
-          if [[ -n "$INPUT_REPLACEMENTS" ]]; then
-            OLD_IFS=$IFS
-            IFS=$'\n,'
-            for replacement in $INPUT_REPLACEMENTS; do
-              KEY=$(echo "$replacement" | cut -d'=' -f1)
-              VALUE=$(echo "$replacement" | cut -d'=' -f2-)
-              echo "Replacing placeholder '{$KEY}' with '$VALUE'"
-              PAYLOAD_CONTENT=$(echo "$PAYLOAD_CONTENT" | sed "s|{$KEY}|$VALUE|g")
-            done
-            IFS=$OLD_IFS
+          if [[ -f "${INPUT_PAYLOAD_FILE_PATH}.fixed" ]]; then
+            echo "Using processed template file: ${INPUT_PAYLOAD_FILE_PATH}.fixed"
+            PAYLOAD_CONTENT=$(cat "${INPUT_PAYLOAD_FILE_PATH}.fixed")
+          else
+            echo "Using raw template file: ${INPUT_PAYLOAD_FILE_PATH}"
+            PAYLOAD_CONTENT=$(cat "${INPUT_PAYLOAD_FILE_PATH}")
           fi
         elif [[ -n "$INPUT_PAYLOAD" ]]; then
           echo "Using direct payload input."
@@ -70,16 +67,14 @@ runs:
         FINAL_PAYLOAD=$(jq -c --arg ch_id "$INPUT_CHANNEL_ID" '.channel = $ch_id' <<< "$PAYLOAD_CONTENT")
 
         if [[ -n "$INPUT_THREAD_TS" ]]; then
-          echo "Replying in thread: $INPUT_THREAD_TS"
           FINAL_PAYLOAD=$(jq -c --arg th_ts "$INPUT_THREAD_TS" '.thread_ts = $th_ts' <<< "$FINAL_PAYLOAD")
 
           if [[ "$INPUT_REPLY_BROADCAST" == "true" ]]; then
-            echo "Broadcasting reply to channel."
             FINAL_PAYLOAD=$(jq -c '.reply_broadcast = true' <<< "$FINAL_PAYLOAD")
           fi
         fi
 
-        echo "Final payload being sent to Slack:"
+        echo "Final payload to be sent to Slack:"
         echo "$FINAL_PAYLOAD" | jq .
 
         API_RESPONSE=$(curl -s -X POST "https://slack.com/api/chat.postMessage" \
@@ -96,13 +91,11 @@ runs:
         fi
 
         MESSAGE_TS=$(jq -r '.ts' <<< "$API_RESPONSE")
-        echo "Successfully sent message with ts: $MESSAGE_TS"
         echo "message-ts=$MESSAGE_TS" >> "$GITHUB_OUTPUT"
       shell: bash
       env:
         INPUT_PAYLOAD: ${{ inputs.payload }}
         INPUT_PAYLOAD_FILE_PATH: ${{ inputs.payload-file-path }}
-        INPUT_REPLACEMENTS: ${{ inputs.replacements }}
         INPUT_CHANNEL_ID: ${{ inputs.channel-id }}
         INPUT_SLACK_BOT_TOKEN: ${{ inputs.slack-bot-token }}
         INPUT_THREAD_TS: ${{ inputs.thread-ts }}
