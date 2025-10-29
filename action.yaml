@@ -1,8 +1,9 @@
 name: Awesome action
 description: Wraps the slack notification action
+
 inputs:
   payload:
-    description: String payload to send
+    description: Direct JSON string payload to send
     required: false
     default: ''
   payload-file-path:
@@ -19,37 +20,83 @@ inputs:
   slack-bot-token:
     description: Access token to the Slack API
     required: true
+  thread-ts:
+    description: The timestamp of a parent message to reply to
+    required: false
+    default: ''
+  reply-broadcast:
+    description: When replying to a thread, also send the message to the main channel
+    required: false
+    default: 'false'
+
+outputs:
+  message-ts:
+    description: The timestamp (ts) of the message that was sent
+    value: ${{ steps.send-message.outputs.message-ts }}
+
 runs:
   using: composite
   steps:
-    - name: Fix Slack notification template
-      if: ${{ inputs.payload-file-path != '' }}
-      id: fix_template
+    - name: Apply replacements (legacy compatible)
+      if: ${{ inputs.payload-file-path != '' && inputs.replacements != '' }}
       run: |
-        ${{ github.action_path }}/script.sh ${{ inputs.payload-file-path }}
+        bash "${{ github.action_path }}/script.sh" "${{ inputs.payload-file-path }}"
       shell: bash
       env:
         REPL: ${{ inputs.replacements }}
-    - name: Send Slack notification template
-      if: ${{ inputs.payload-file-path != '' && steps.fix_template.outcome == 'success' }}
-      id: slack-notification-template
-      uses: slackapi/slack-github-action@v1.26.0
-      with:
-        channel-id: ${{ inputs.channel-id }}
-        payload-file-path: ${{ inputs.payload-file-path }}.fixed
-      env:
-        SLACK_BOT_TOKEN: ${{ inputs.slack-bot-token }}
-    - name: Send Slack notification payload
-      if: ${{ inputs.payload-file-path == '' && inputs.payload != '' }}
-      id: slack-notification-payload
-      uses: slackapi/slack-github-action@v1.26.0
-      with:
-        channel-id: ${{ inputs.channel-id }}
-        payload: ${{ inputs.payload }}
-      env:
-        SLACK_BOT_TOKEN: ${{ inputs.slack-bot-token }}
-    - name: Clean temporal files
-      id: clean
-      if: ${{ always() && inputs.payload-file-path != '' && steps.fix_template.outcome == 'success' }}
-      run: rm ${{ inputs.payload-file-path }}.fixed
+
+    - id: send-message
+      run: |
+        set -e
+        if [[ -n "$INPUT_PAYLOAD_FILE_PATH" ]]; then
+          if [[ -f "${INPUT_PAYLOAD_FILE_PATH}.fixed" ]]; then
+            echo "Using processed template file: ${INPUT_PAYLOAD_FILE_PATH}.fixed"
+            PAYLOAD_CONTENT=$(cat "${INPUT_PAYLOAD_FILE_PATH}.fixed")
+          else
+            echo "Using raw template file: ${INPUT_PAYLOAD_FILE_PATH}"
+            PAYLOAD_CONTENT=$(cat "${INPUT_PAYLOAD_FILE_PATH}")
+          fi
+        elif [[ -n "$INPUT_PAYLOAD" ]]; then
+          echo "Using direct payload input."
+          PAYLOAD_CONTENT="$INPUT_PAYLOAD"
+        else
+          echo "Error: You must provide either 'payload' or 'payload-file-path'."
+          exit 1
+        fi
+
+        FINAL_PAYLOAD=$(jq -c --arg ch_id "$INPUT_CHANNEL_ID" '.channel = $ch_id' <<< "$PAYLOAD_CONTENT")
+
+        if [[ -n "$INPUT_THREAD_TS" ]]; then
+          FINAL_PAYLOAD=$(jq -c --arg th_ts "$INPUT_THREAD_TS" '.thread_ts = $th_ts' <<< "$FINAL_PAYLOAD")
+
+          if [[ "$INPUT_REPLY_BROADCAST" == "true" ]]; then
+            FINAL_PAYLOAD=$(jq -c '.reply_broadcast = true' <<< "$FINAL_PAYLOAD")
+          fi
+        fi
+
+        echo "Final payload to be sent to Slack:"
+        echo "$FINAL_PAYLOAD" | jq .
+
+        API_RESPONSE=$(curl -s -X POST "https://slack.com/api/chat.postMessage" \
+          -H "Authorization: Bearer $INPUT_SLACK_BOT_TOKEN" \
+          -H "Content-Type: application/json; charset=utf-8" \
+          -d "$FINAL_PAYLOAD")
+
+        echo "Slack API Response: $API_RESPONSE"
+
+        if [[ $(jq -r '.ok' <<< "$API_RESPONSE") != "true" ]]; then
+          ERROR_MSG=$(jq -r '.error' <<< "$API_RESPONSE")
+          echo "::error title=Slack API Error::$ERROR_MSG"
+          exit 1
+        fi
+
+        MESSAGE_TS=$(jq -r '.ts' <<< "$API_RESPONSE")
+        echo "message-ts=$MESSAGE_TS" >> "$GITHUB_OUTPUT"
       shell: bash
+      env:
+        INPUT_PAYLOAD: ${{ inputs.payload }}
+        INPUT_PAYLOAD_FILE_PATH: ${{ inputs.payload-file-path }}
+        INPUT_CHANNEL_ID: ${{ inputs.channel-id }}
+        INPUT_SLACK_BOT_TOKEN: ${{ inputs.slack-bot-token }}
+        INPUT_THREAD_TS: ${{ inputs.thread-ts }}
+        INPUT_REPLY_BROADCAST: ${{ inputs.reply-broadcast }}
