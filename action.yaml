@@ -40,16 +40,17 @@ runs:
     - name: Apply replacements (legacy compatible)
       if: ${{ inputs.payload-file-path != '' && inputs.replacements != '' }}
       run: |
-        bash "${{ github.action_path }}/script.sh" "${{ inputs.payload-file-path }}"
+        bash "${GITHUB_ACTION_PATH}/script.sh" "${INPUT_PAYLOAD_FILE_PATH}"
       shell: bash
       env:
         REPL: ${{ inputs.replacements }}
+        INPUT_PAYLOAD_FILE_PATH: ${{ inputs.payload-file-path }}
 
     - id: send-message
       run: |
         set -e
         if [[ -n "$INPUT_PAYLOAD_FILE_PATH" ]]; then
-          if [[ -f "${INPUT_PAYLOAD_FILE_PATH}.fixed" ]]; then
+          if [[ -n "$INPUT_REPLACEMENTS" ]]; then
             echo "Using processed template file: ${INPUT_PAYLOAD_FILE_PATH}.fixed"
             PAYLOAD_CONTENT=$(cat "${INPUT_PAYLOAD_FILE_PATH}.fixed")
           else
@@ -77,7 +78,7 @@ runs:
         echo "Final payload to be sent to Slack:"
         echo "$FINAL_PAYLOAD" | jq .
 
-        API_RESPONSE=$(curl -s -X POST "https://slack.com/api/chat.postMessage" \
+        API_RESPONSE=$(curl -sS --max-time 30 --retry 3 -X POST "https://slack.com/api/chat.postMessage" \
           -H "Authorization: Bearer $INPUT_SLACK_BOT_TOKEN" \
           -H "Content-Type: application/json; charset=utf-8" \
           -d "$FINAL_PAYLOAD")
@@ -96,7 +97,15 @@ runs:
       env:
         INPUT_PAYLOAD: ${{ inputs.payload }}
         INPUT_PAYLOAD_FILE_PATH: ${{ inputs.payload-file-path }}
+        INPUT_REPLACEMENTS: ${{ inputs.replacements }}
         INPUT_CHANNEL_ID: ${{ inputs.channel-id }}
         INPUT_SLACK_BOT_TOKEN: ${{ inputs.slack-bot-token }}
         INPUT_THREAD_TS: ${{ inputs.thread-ts }}
         INPUT_REPLY_BROADCAST: ${{ inputs.reply-broadcast }}
+
+    - name: Clean temporal files
+      if: ${{ always() && inputs.payload-file-path != '' && inputs.replacements != '' }}
+      run: rm -f "${INPUT_PAYLOAD_FILE_PATH}.fixed"
+      shell: bash
+      env:
+        INPUT_PAYLOAD_FILE_PATH: ${{ inputs.payload-file-path }}
