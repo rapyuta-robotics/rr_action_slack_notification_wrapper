@@ -14,9 +14,23 @@ This action is a workaround for this [open issue](https://github.com/slackapi/sl
 `replacements`|Ad-hoc replacements to perform on the `payload-file-path`; see [Ad-hoc replacements](#12-ad-hoc-replacements)|:heavy_check_mark:
 `channel-id`|Slack channel to send the message to|:x:
 `slack-bot-token`|Access token to the Slack API|:x:
+`thread-ts`|Timestamp of a parent message; the message is posted as a reply in its thread|:heavy_check_mark:
+`reply-broadcast`|`true` also posts a thread reply to the channel|:heavy_check_mark:
+
+### 1.1.1 Outputs
+
+|Name|Description
+-|-
+`message-ts`|Timestamp (`ts`) of the posted message, for threading later replies
 
 > ### :memo: **Note:**
 > Either `payload` or `payload-file-path` must be provided, the step will fail if none is provided.
+
+> ### :warning: **Changes in 2.0.0**
+> The action posts with `chat.postMessage` directly instead of `slackapi/slack-github-action@v1.26.0`. Compared with 1.x:
+> - `channel-id` takes one channel; comma-separated lists are no longer split.
+> - `${{ github.* }}` / `${{ env.* }}` placeholders inside a payload file are no longer expanded; use `replacements`.
+> - `channel-id` overrides a `channel` key in the payload.
 
 ### 1.2 Ad-hoc replacements
 
